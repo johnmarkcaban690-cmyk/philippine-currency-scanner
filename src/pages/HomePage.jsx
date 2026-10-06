@@ -25,11 +25,13 @@ function HomePage({ history, onNavigate }) {
         <div className="card-row-between">
           <div>
             <p className="label-muted">HOG-SVM AI status</p>
-            <h2>Model not installed</h2>
+            <h2>Linear HOG-SVM</h2>
           </div>
-          <span className="status-pill warning">Offline</span>
+          <span className="status-pill">On-device</span>
         </div>
-        <p className="muted-text">The scanner is ready for a future HOG-SVM deployment.</p>
+        <p className="muted-text">
+          Currency recognition runs locally. The model is cached for offline use after installation.
+        </p>
       </section>
 
       <button type="button" className="primary-button" onClick={() => onNavigate('scan')}>

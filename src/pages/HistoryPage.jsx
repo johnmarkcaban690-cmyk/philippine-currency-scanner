@@ -1,5 +1,12 @@
 import { useMemo } from 'react'
 
+function formatPeso(value) {
+  return `₱${Number(value).toLocaleString('en-PH', {
+    minimumFractionDigits: value % 1 ? 2 : 0,
+    maximumFractionDigits: 2,
+  })}`
+}
+
 function HistoryPage({ history }) {
   const entries = useMemo(() => history, [history])
 
@@ -22,12 +29,18 @@ function HistoryPage({ history }) {
             {entries.map((entry) => (
               <li key={entry.id} className="history-item detailed-item">
                 <div>
-                  <strong>{entry.label || 'Currency scan'}</strong>
-                  <small>{entry.date || 'Recent scan'}</small>
+                  <strong>{entry.date || 'Recent scan'}</strong>
+                  <small>{entry.time || entry.label || 'Currency scan'}</small>
+                  {entry.items?.map((item) => (
+                    <small key={`${item.denomination}-${item.quantity}`}>
+                      {formatPeso(item.denomination)} × {item.quantity} ={' '}
+                      {formatPeso(item.subtotal)}
+                    </small>
+                  ))}
                 </div>
                 <div className="history-meta">
-                  <span>{entry.status || 'Queued'}</span>
-                  <strong>{entry.totalValue ? `₱${entry.totalValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '₱0.00'}</strong>
+                  <span>TOTAL</span>
+                  <strong>{formatPeso(entry.totalValue || 0)}</strong>
                 </div>
               </li>
             ))}

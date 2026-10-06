@@ -1,13 +1,31 @@
 import { useEffect, useRef, useState } from 'react'
-import { detectCurrency } from '../services/currencyDetector'
+import { currencyPipeline, detectCurrency, loadCurrencyModel } from '../services/currencyDetector'
 
-function ScanPage() {
+const emptyResult = {
+  detected: false,
+  results: [],
+  totalValue: 0,
+  model: 'Linear HOG-SVM',
+  status: 'Loading local model',
+}
+
+function formatPeso(value) {
+  return `₱${value.toLocaleString('en-PH', {
+    minimumFractionDigits: value % 1 ? 2 : 0,
+    maximumFractionDigits: 2,
+  })}`
+}
+
+function ScanPage({ onScanCompleted }) {
   const videoRef = useRef(null)
   const streamRef = useRef(null)
+  const scanInFlightRef = useRef(false)
   const [cameraSupported, setCameraSupported] = useState(true)
   const [cameraError, setCameraError] = useState('')
   const [isCameraActive, setIsCameraActive] = useState(false)
-  const [result, setResult] = useState(() => detectCurrency(''))
+  const [modelReady, setModelReady] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [result, setResult] = useState(emptyResult)
   const [capturedPreview, setCapturedPreview] = useState('')
 
   const stopCamera = () => {
@@ -38,12 +56,7 @@ function ScanPage() {
     try {
       setCameraError('')
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'environment',
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
+        video: { facingMode: 'environment' },
       })
 
       streamRef.current = stream
@@ -80,28 +93,72 @@ function ScanPage() {
       void startCamera()
     }, 0)
 
+    loadCurrencyModel()
+      .then(() => {
+        setModelReady(true)
+        setResult({ ...emptyResult, status: 'Model ready' })
+      })
+      .catch((error) => {
+        setResult({ ...emptyResult, status: `Model load failed: ${error.message}` })
+      })
+
     return () => {
       window.clearTimeout(timer)
       stopCamera()
     }
   }, [])
 
-  const handleCapture = () => {
-    if (!videoRef.current) {
+  const handleCapture = async () => {
+    const video = videoRef.current
+    if (
+      !video ||
+      !video.videoWidth ||
+      !video.videoHeight ||
+      scanInFlightRef.current
+    ) {
       return
     }
 
-    const video = videoRef.current
     const canvas = document.createElement('canvas')
     const context = canvas.getContext('2d')
+    if (!context) {
+      setResult({ ...emptyResult, status: 'Image capture failed: canvas unavailable' })
+      return
+    }
 
-    canvas.width = video.videoWidth || 1280
-    canvas.height = video.videoHeight || 720
-
+    scanInFlightRef.current = true
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
     context.drawImage(video, 0, 0, canvas.width, canvas.height)
-    const imageDataUrl = canvas.toDataURL('image/jpeg', 0.92)
-    setCapturedPreview(imageDataUrl)
-    setResult(detectCurrency(imageDataUrl))
+    setCapturedPreview(canvas.toDataURL('image/jpeg', 0.92))
+    setIsProcessing(true)
+    setResult({ ...emptyResult, status: 'Processing captured image' })
+
+    let scanResult
+    try {
+      try {
+        scanResult = await detectCurrency(canvas)
+      } catch (error) {
+        setResult({ ...emptyResult, status: `Scan failed: ${error.message}` })
+      }
+
+      if (scanResult?.detected && scanResult.results.length > 0) {
+        try {
+          onScanCompleted(scanResult)
+          setResult({ ...scanResult, status: 'Detected and saved to History' })
+        } catch (error) {
+          setResult({
+            ...scanResult,
+            status: `History save failed: ${error.message}`,
+          })
+        }
+      } else if (scanResult) {
+        setResult(scanResult)
+      }
+    } finally {
+      scanInFlightRef.current = false
+      setIsProcessing(false)
+    }
   }
 
   return (
@@ -134,8 +191,13 @@ function ScanPage() {
       )}
 
       <div className="scan-actions">
-        <button type="button" className="primary-button" onClick={handleCapture} disabled={!isCameraActive}>
-          Capture
+        <button
+          type="button"
+          className="primary-button"
+          onClick={() => void handleCapture()}
+          disabled={!isCameraActive || !modelReady || isProcessing}
+        >
+          {isProcessing ? 'Processing…' : 'Capture'}
         </button>
         <button type="button" className="secondary-button" onClick={stopCamera}>
           Back / Stop Camera
@@ -143,16 +205,43 @@ function ScanPage() {
       </div>
 
       <div className="result-panel">
-        <h3>{result.detected ? 'Currency Detected' : 'No Currency Detected'}</h3>
-        <p>{result.detected ? 'Currency identified successfully.' : 'AI model not installed yet.'}</p>
+        <h3>
+          {result.detected
+            ? 'Currency Detected'
+            : result.status === 'No Currency Detected'
+              ? 'No Currency Detected'
+              : 'Scanner Status'}
+        </h3>
+        <p>
+          {result.detected
+            ? `${result.count} currency region${result.count === 1 ? '' : 's'} detected.`
+            : result.status === 'No Currency Detected'
+              ? 'Try placing the currency on a clear, well-lit surface and capture again.'
+              : result.status === 'Model ready'
+                ? 'Capture an image to scan for Philippine currency.'
+                : result.status}
+        </p>
         <p>Model: {result.model}</p>
-        <p>Status: {result.status === 'Model not installed' ? 'Model Not Installed' : result.status}</p>
+        <p>Status: {result.status}</p>
+        {result.detected && (
+          <div className="detection-list" aria-label="Detected denominations">
+            {result.results.map((item) => (
+              <p key={item.value}>
+                {item.count} × {formatPeso(item.value)} = {formatPeso(item.subtotal)}
+              </p>
+            ))}
+          </div>
+        )}
+        <p>
+          Total value:{' '}
+          <strong>{formatPeso(result.detected ? result.totalValue : 0)}</strong>
+        </p>
       </div>
 
       <div className="pipeline-panel">
-        <h3>Future HOG-SVM Pipeline</h3>
+        <h3>Local HOG-SVM Pipeline</h3>
         <ul>
-          {['Camera', 'Capture Image', 'Preprocessing', 'Currency/Object Localization', 'Crop Currency', 'Resize', 'Grayscale', 'HOG Feature Extraction', 'SVM Classification', 'Denomination Detection', 'Currency Counting', 'Total Value Calculation'].map((step) => (
+          {currencyPipeline.map((step) => (
             <li key={step}>{step}</li>
           ))}
         </ul>

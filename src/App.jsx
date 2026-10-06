@@ -4,19 +4,24 @@ import CalculatePage from './pages/CalculatePage'
 import HistoryPage from './pages/HistoryPage'
 import HomePage from './pages/HomePage'
 import ScanPage from './pages/ScanPage'
-import { getStoredHistory } from './utils/storage'
+import { getStoredHistory, saveScanToHistory } from './utils/storage'
 import './App.css'
 
 function App() {
   const [activeTab, setActiveTab] = useState('home')
-  const [history] = useState(() => getStoredHistory())
+  const [history, setHistory] = useState(() => getStoredHistory())
+
+  const handleScanCompleted = (scanResult) => {
+    const saved = saveScanToHistory(scanResult)
+    setHistory(saved.history)
+  }
 
   const renderPage = () => {
     switch (activeTab) {
       case 'home':
         return <HomePage history={history} onNavigate={setActiveTab} />
       case 'scan':
-        return <ScanPage />
+        return <ScanPage onScanCompleted={handleScanCompleted} />
       case 'history':
         return <HistoryPage history={history} />
       case 'calculate':
